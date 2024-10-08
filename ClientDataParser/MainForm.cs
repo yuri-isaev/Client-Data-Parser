@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using ClientDataParser.Contracts;
 using ClientDataParser.Domains;
 using ClientDataParser.Persistance;
 using ClientDataParser.Validators;
@@ -8,23 +9,25 @@ namespace ClientDataParser;
 
 public partial class MainForm : Form
 {
-  private BindingList<Client> _clientsBindingList;
+  public BindingList<Client> _clientsBindingList;
   private string _oldCardCode;
-  private ClientRepository _clientRepository;
+  private IClientRepository _clientRepository;
 
-  public MainForm()
+  public MainForm(IClientRepository clientRepository)
   {
     InitializeComponent();
-    _clientRepository = new ClientRepository(new AppDbContext());
+    _clientRepository = clientRepository;
     LoadClients();
   }
 
-  private void LoadClients()
+  public void LoadClients()
   {
     try
     {
-      var clients = _clientRepository.GetAllClientsOrderedByLastName();
-      _clientsBindingList = new BindingList<Client>(clients);
+      // По умолчанию пустой список, если значение равно нулю
+      var clients = _clientRepository.GetAllClientsOrderedByLastName() ?? new List<Client>(); 
+      
+      _clientsBindingList = new BindingList<Client>(clients.ToList());
       dataGridView.DataSource = _clientsBindingList;
     }
     catch (Exception ex)
@@ -33,7 +36,8 @@ public partial class MainForm : Form
     }
   }
 
-  private void ImportFromExcel(string filePath)
+
+  public void ImportFromExcel(string filePath)
   {
     var clients = ReadClientsFromExcel(filePath);
     SaveClientsToDatabase(clients, _clientRepository);
@@ -79,10 +83,11 @@ public partial class MainForm : Form
     return clients;
   }
 
-  private bool TryCreateClientFromRow(IXLRow row, out Client client)
+  public bool TryCreateClientFromRow(IXLRow row, out Client client)
   {
     client = null!;
-    // Считываем данные из Excel
+
+    #region Чтение данных из Excel
     var cardCode = row.Cell(1).GetFormattedString().Trim();
     var lastName = row.Cell(2).GetString().Trim();
     var firstName = row.Cell(3).GetString().Trim();
@@ -95,18 +100,14 @@ public partial class MainForm : Form
     var pincodeString = row.Cell(10).GetFormattedString().Trim();
     var bonusString = row.Cell(11).GetString().Trim();
     var turnoverString = row.Cell(12).GetString().Trim();
-
+    #endregion
 
     #region Валидация полей
-
-    if (!FieldsValidator.IsValid(cardCode, phoneMobile, lastName) ||
-        !PhoneValidator.IsValid(ref phoneMobile, lastName))
-      return false;
+    if (!FieldsValidator.IsValid(cardCode, phoneMobile, lastName) || !PhoneValidator.IsValid(ref phoneMobile, lastName)) return false;
     if (!FieldsValidator.IsDateValid(birthdayString, out DateTime birthday, lastName)) return false;
     if (!FieldsValidator.IsPincodeValid(pincodeString, lastName, out int? localPincode)) return false;
     if (!FieldsValidator.IsBonusValid(bonusString, lastName, out int? bonus)) return false;
     if (!FieldsValidator.IsTurnoverValid(turnoverString, lastName, out int? turnover)) return false;
-
     #endregion
 
     genderId = string.IsNullOrWhiteSpace(genderId) ? "" : genderId;
@@ -130,7 +131,7 @@ public partial class MainForm : Form
     return true;
   }
 
-  private void SaveClientsToDatabase(List<Client> clients, ClientRepository clientRepository)
+  public void SaveClientsToDatabase(List<Client> clients, IClientRepository clientRepository)
   {
     using (var context = new AppDbContext())
     {
@@ -159,7 +160,7 @@ public partial class MainForm : Form
     }
   }
 
-  // listener method
+  // Метод слушателя
   private void dataGridView_CellBeginEdit(object sender, DataGridViewCellCancelEventArgs e)
   {
     // Сохраняем старый CardCode при начале редактирования
@@ -170,8 +171,8 @@ public partial class MainForm : Form
     }
   }
 
-  // listener method
-  private void dataGridView_CellValueChanged(object sender, DataGridViewCellEventArgs e)
+  // Метод слушателя
+  public void dataGridView_CellValueChanged(object sender, DataGridViewCellEventArgs e)
   {
     if (e.RowIndex < 0) return; // Игнорируем заголовки
 
@@ -207,7 +208,7 @@ public partial class MainForm : Form
           return;
         }
 
-        // Теперь находим клиента по старому CardCode
+        // Находим клиента по старому CardCode
         var existingClient = _clientRepository.GetClientByCardCode(context, oldCardCode);
         if (existingClient != null)
         {
@@ -231,11 +232,11 @@ public partial class MainForm : Form
             };
 
             _clientRepository.RemoveClient(context, existingClient); // Удаляем старый объект
-            _clientRepository.AddClient(context, updatedClient); // Добавляем новый объект
+            _clientRepository.AddNewClient(context, updatedClient); // Добавляем новый объект
             _clientRepository.SaveChanges(context); // Сохраняем изменения
 
             // Обновляем объект в BindingList
-            _clientsBindingList[e.RowIndex] = updatedClient; // Убедитесь, что BindingList обновлен
+            _clientsBindingList[e.RowIndex] = updatedClient;
           }
           catch (Exception ex)
           {
